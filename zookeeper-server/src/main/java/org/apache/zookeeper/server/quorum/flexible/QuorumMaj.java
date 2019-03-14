@@ -31,7 +31,8 @@ import org.apache.zookeeper.server.quorum.QuorumPeerConfig.ConfigException;
 /**
  * This class implements a validator for majority quorums. The implementation is
  * straightforward.
- * 
+ * 这个类用来判断给定的quorums是否是votingMembers的一多半。
+ * 构造函数中把所有的Members分成了votingMembers和observingMembers。
  */
 public class QuorumMaj implements QuorumVerifier {
     private Map<Long, QuorumServer> allMembers = new HashMap<Long, QuorumServer>();

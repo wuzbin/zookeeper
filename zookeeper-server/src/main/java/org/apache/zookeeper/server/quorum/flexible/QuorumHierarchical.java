@@ -64,6 +64,8 @@ import org.apache.zookeeper.server.quorum.QuorumPeerConfig.ConfigException;
  *  weight.9=1
  * 
  * Note that it is still necessary to define peers using the server keyword.
+ * 分层结构的quorums验证器。把servers分成不同的组，每个server都有自己的一个权重。
+ * 判断是否大多数投票的规则是：是否有大多数group的权重都超过各group内部服务器权重的一半。
  */
 
 public class QuorumHierarchical implements QuorumVerifier {

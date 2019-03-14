@@ -72,73 +72,105 @@ import org.slf4j.LoggerFactory;
  * message to the tail of the queue, thus changing the order of messages.
  * Although this is not a problem for the leader election, it could be a problem
  * when consolidating peer communication. This is to be verified, though.
- * 
+ * 该类的主要职责是管理leader选举时的tcp连接。保证在每一对节点间有且仅有一个连接。
+ * 如果两个节点在启动时同时创建连接，该类会根据两个节点的IP地址，断掉其中一个连接，以保证两个节点间只有一个连接。//TODO IP规则是啥
+ * 对每一个节点，该类都维持一个队列，来存储要发送的消息。如果sender在发送消息的时候，连接断了，那么sender会把消息放到该队列的后面。
+ * 在这种情况下，相当于改变了消息的顺序。尽管这在leader选举时不会有问题，但在consolidating peer communication时可能有问题，需要
+ * 验证一下。
  */
 
 public class QuorumCnxManager {
     private static final Logger LOG = LoggerFactory.getLogger(QuorumCnxManager.class);
 
-    /*
+    /**
      * Maximum capacity of thread queues
+     * 接收队列的大小
      */
     static final int RECV_CAPACITY = 100;
-    // Initialized to 1 to prevent sending
-    // stale notifications to peers
+    /** Initialized to 1 to prevent sending stale notifications to peers
+     * 初始化为1，来阻止发送过期的通知
+     */
     static final int SEND_CAPACITY = 1;
 
+    /**
+     * 数据包大小
+     */
     static final int PACKETMAXSIZE = 1024 * 512;
     
-    /*
+    /**
      * Negative counter for observer server ids.
+     * 负的计数器，用来计数observer
      */
 
     private AtomicLong observerCounter = new AtomicLong(-1);
 
-    /*
+    /**
      * Protocol identifier used among peers
      */
     public static final long PROTOCOL_VERSION = -65536L;
 
     /*
      * Max buffer size to be read from the network.
+     * 读buffer的大小
      */
     static public final int maxBuffer = 2048;
 
     /*
-     * Connection time out value in milliseconds 
+     * Connection time out value in milliseconds
+     * 连接超时时间, 毫秒为单位
      */
-    
     private int cnxTO = 5000;
 
+    /**
+     * 当前节点
+     */
     final QuorumPeer self;
 
-    /*
+    /**
      * Local IP address
+     * 本地ip地址做为mySid
      */
     final long mySid;
     final int socketTimeout;
+
+    /**
+     * 集群中的服务器map，key是服务器id, value是QuorumServer
+     */
     final Map<Long, QuorumPeer.QuorumServer> view;
+
+    /**
+     *
+     */
     final boolean listenOnAllIPs;
+
+    /**
+     * 线程池
+     */
     private ThreadPoolExecutor connectionExecutor;
+    /***
+     * 过程中的连接
+     */
     private final Set<Long> inprogressConnections = Collections
             .synchronizedSet(new HashSet<Long>());
     private QuorumAuthServer authServer;
     private QuorumAuthLearner authLearner;
     private boolean quorumSaslAuthEnabled;
-    /*
+    /**
      * Counter to count connection processing threads.
+     * 线程计数器(处理连接中)
      */
     private AtomicInteger connectionThreadCnt = new AtomicInteger(0);
 
-    /*
+    /**
      * Mapping from Peer to Thread number
      */
     final ConcurrentHashMap<Long, SendWorker> senderWorkerMap;
     final ConcurrentHashMap<Long, ArrayBlockingQueue<ByteBuffer>> queueSendMap;
     final ConcurrentHashMap<Long, ByteBuffer> lastMessageSent;
 
-    /*
+    /**
      * Reception queue
+     * 接收消息队列
      */
     public final ArrayBlockingQueue<Message> recvQueue;
     /*
@@ -952,6 +984,9 @@ public class QuorumCnxManager {
      * Thread to send messages. Instance waits on a queue, and send a message as
      * soon as there is one available. If connection breaks, then opens a new
      * one.
+     * 发送消息的线程，基于阻塞队列。队列有消息，就拿出来发。
+     * 如果连接断了，就新打开一个。
+     * 针对每一个peer都会有一个SenderWorker
      */
     class SendWorker extends ZooKeeperThread {
         Long sid;
@@ -1052,6 +1087,12 @@ public class QuorumCnxManager {
                  * If the send queue is non-empty, then we have a recent
                  * message than that stored in lastMessage. To avoid sending
                  * stale message, we should send the message in the send queue.
+                 * run方法开始执行，如果发送队列里面没有要发送的内容，就把最后一次发送的消息重发一遍。
+                 * 主要是容错考虑，因为run方法开始执行，可能是上次发送时连接出错，导致线程退出，导致消息没发出去，重复发送
+                 * 的消息，需要对方peer来处理。
+                 * 为什么在发送队列为空时，会发最有一次发送的消息，而当发送队列不为空时就不发呢？
+                 * 因为如果发送队列不为空，那么队列里的消息都会比lastMessage新，为了避免发送过期的消息，就不发送lastMessage
+                 * 那这种情况下，lastMessage是不是就被丢弃了，而没有生效？
                  */
                 ArrayBlockingQueue<ByteBuffer> bq = queueSendMap.get(sid);
                 if (bq == null || isSendQueueEmpty(bq)) {
